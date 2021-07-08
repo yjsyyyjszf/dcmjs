@@ -1,9 +1,9 @@
 {
   "name": "dcmjs",
-  "version": "0.9.0",
+  "version": "0.11.0",
   "description": "Javascript implementation of DICOM manipulation",
   "main": "build/dcmjs.js",
-  "module": "build/dcmje.es.js",
+  "module": "build/dcmjs.es.js",
   "directories": {
     "example": "examples"
   },
@@ -12,7 +12,6 @@
     "build": "rollup -c",
     "build:examples": "npm run build && npx cpx 'build/**/*.{js,map}' examples/js",
     "start": "rollup -c -w",
-    "prepublishOnly": "npm run build",
     "lint": "eslint -c .eslintrc.json --fix src && prettier --tab-width 4 --write src/**/*.js"
   },
   "repository": {
@@ -28,6 +27,7 @@
   "devDependencies": {
     "@babel/core": "^7.8.4",
     "@babel/preset-env": "^7.8.4",
+    "@babel/register": "^7.13.0",
     "acorn": "^7.1.0",
     "acorn-jsx": "^5.2.0",
     "babel-eslint": "^10.1.0",
@@ -44,11 +44,14 @@
     "rollup-plugin-node-builtins": "^2.1.2",
     "rollup-plugin-node-globals": "^1.4.0",
     "rollup-plugin-node-resolve": "^4.2.4",
-    "unzipper": "^0.10.9"
+    "unzipper": "^0.10.9",
+    "xml2js": "^0.4.23"
   },
   "dependencies": {
     "@babel/polyfill": "^7.8.3",
     "@babel/runtime": "^7.8.4",
+    "gl-matrix": "^3.1.0",
+    "lodash.clonedeep": "^4.5.0",
     "loglevelnext": "^3.0.1",
     "ndarray": "^1.0.19"
   },
