@@ -1,77 +1,116 @@
-//http://jonisalonen.com/2012/from-utf-16-to-utf-8-in-javascript/
-function toUTF8Array(str) {
-    var utf8 = [];
-    for (var i = 0; i < str.length; i++) {
-        var charcode = str.charCodeAt(i);
-        if (charcode < 0x80) utf8.push(charcode);
-        else if (charcode < 0x800) {
-            utf8.push(0xc0 | (charcode >> 6), 0x80 | (charcode & 0x3f));
-        } else if (charcode < 0xd800 || charcode >= 0xe000) {
-            utf8.push(
-                0xe0 | (charcode >> 12),
-                0x80 | ((charcode >> 6) & 0x3f),
-                0x80 | (charcode & 0x3f)
-            );
-        }
-        // surrogate pair
-        else {
-            i++;
-            // UTF-16 encodes 0x10000-0x10FFFF by
-            // subtracting 0x10000 and splitting the
-            // 20 bits of 0x0-0xFFFFF into two halves
-            charcode =
-                0x10000 +
-                (((charcode & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
-            utf8.push(
-                0xf0 | (charcode >> 18),
-                0x80 | ((charcode >> 12) & 0x3f),
-                0x80 | ((charcode >> 6) & 0x3f),
-                0x80 | (charcode & 0x3f)
-            );
-        }
+import pako from "pako";
+import SplitDataView from "./SplitDataView";
+import { toFloat } from "./utilities/toFloat";
+import { toInt } from "./utilities/toInt";
+
+export class BufferStream {
+    offset = 0;
+    startOffset = 0;
+    isLittleEndian = false;
+    size = 0;
+    view = new SplitDataView();
+    /** The available listeners are those waiting for a query response */
+    availableListeners = [];
+
+    /** Indicates if this buffer stream is complete/has finished being created */
+    isComplete = false;
+
+    /** A flag to set to indicate to clear buffers as they get consumed */
+    clearBuffers = false;
+
+    encoder = new TextEncoder("utf-8");
+
+    constructor(options = null) {
+        this.isLittleEndian = options?.littleEndian || this.isLittleEndian;
+        this.view.defaultSize = options?.defaultSize ?? this.view.defaultSize;
+        this.clearBuffers = options.clearBuffers || false;
     }
-    return utf8;
-}
 
-function toInt(val) {
-    if (isNaN(val)) {
-        throw new Error("Not a number: " + val);
-    } else if (typeof val == "string") {
-        return parseInt(val);
-    } else return val;
-}
+    /**
+     * Mark this stream as having finished being written or read from
+     */
+    setComplete(value = true) {
+        this.isComplete = value;
+        this.notifyAvailableListeners();
+    }
 
-function toFloat(val) {
-    if (isNaN(val)) {
-        throw new Error("Not a number: " + val);
-    } else if (typeof val == "string") {
-        return parseFloat(val);
-    } else return val;
-}
+    /**
+     * Indicates if the value length is currently available in the already
+     * read/defined portion of the stream.
+     *
+     * By default this will test if the buffer is complete as well,
+     * but this can be changed with orComplete=false.
+     */
+    isAvailable(length, orComplete = true) {
+        return (
+            this.offset + length <= this.endOffset ||
+            (orComplete && this.isComplete)
+        );
+    }
 
-class BufferStream {
-    constructor(sizeOrBuffer, littleEndian) {
-        this.buffer =
-            typeof sizeOrBuffer == "number"
-                ? new ArrayBuffer(sizeOrBuffer)
-                : sizeOrBuffer;
-        if (!this.buffer) {
-            this.buffer = new ArrayBuffer(0);
+    /**
+     * Ensures that the specified number of bytes are available OR that it is
+     * EOF.  By default waits for at least 1k to be available.
+     */
+    ensureAvailable(bytes = 1024) {
+        if (!this.isAvailable(bytes)) {
+            return new Promise(resolve => {
+                const recheckAvailable = () => {
+                    if (this.isAvailable(bytes)) {
+                        resolve(true);
+                        return;
+                    }
+                    this.availableListeners.push(recheckAvailable);
+                };
+                recheckAvailable();
+            });
         }
-        this.view = new DataView(this.buffer);
-        this.offset = 0;
-        this.isLittleEndian = littleEndian || false;
-        this.size = 0;
+        return true;
     }
 
     setEndian(isLittle) {
         this.isLittleEndian = isLittle;
     }
 
+    slice(start = this.startOffset, end = this.endOffset) {
+        return this.view.slice(start, end);
+    }
+
+    /**
+     * @deprecated Gets the entire buffer at once.  Suggest using the
+     *     view instead, and writing an iterator over the parts to finish
+     *     writing it.
+     */
+    getBuffer(start = 0, end = this.size) {
+        if (this.noCopy) {
+            return new Uint8Array(this.slice(start, end));
+        }
+
+        return this.slice(start, end);
+    }
+
+    get buffer() {
+        // console.warn("Deprecated buffer get");
+        return this.getBuffer();
+    }
+
+    get available() {
+        return this.endOffset - this.offset;
+    }
+
     writeUint8(value) {
         this.checkSize(1);
         this.view.setUint8(this.offset, toInt(value));
         return this.increment(1);
+    }
+
+    writeUint8Repeat(value, count) {
+        const v = toInt(value);
+        this.checkSize(count);
+        for (let i = 0; i < count; i++) {
+            this.view.setUint8(this.offset + i, v);
+        }
+        return this.increment(count);
     }
 
     writeInt8(value) {
@@ -84,6 +123,19 @@ class BufferStream {
         this.checkSize(2);
         this.view.setUint16(this.offset, toInt(value), this.isLittleEndian);
         return this.increment(2);
+    }
+
+    writeTwoUint16s(value) {
+        this.checkSize(4);
+        const first = value >> 16;
+        const second = value & 0xffff;
+        this.view.setUint16(this.offset, toInt(first), this.isLittleEndian);
+        this.view.setUint16(
+            this.offset + 2,
+            toInt(second),
+            this.isLittleEndian
+        );
+        return this.increment(4);
     }
 
     writeInt16(value) {
@@ -104,6 +156,12 @@ class BufferStream {
         return this.increment(4);
     }
 
+    writeBigUint64(value) {
+        this.checkSize(8);
+        this.view.setBigUint64(this.offset, value, this.isLittleEndian);
+        return this.increment(8);
+    }
+
     writeFloat(value) {
         this.checkSize(4);
         this.view.setFloat32(this.offset, toFloat(value), this.isLittleEndian);
@@ -116,40 +174,29 @@ class BufferStream {
         return this.increment(8);
     }
 
-    writeString(value) {
-        value = value || "";
-        var utf8 = toUTF8Array(value),
-            bytelen = utf8.length;
-
-        this.checkSize(bytelen);
-        var startOffset = this.offset;
-        for (var i = 0; i < bytelen; i++) {
-            this.view.setUint8(startOffset, utf8[i]);
-            startOffset++;
-        }
-        return this.increment(bytelen);
+    writeUTF8String(value) {
+        const encodedString = this.encoder.encode(value);
+        this.checkSize(encodedString.byteLength);
+        this.view.writeBuffer(encodedString, this.offset);
+        return this.increment(encodedString.byteLength);
     }
 
-    writeHex(value) {
-        var len = value.length,
-            blen = len / 2,
-            startOffset = this.offset;
-        this.checkSize(blen);
-        for (var i = 0; i < len; i += 2) {
-            var code = parseInt(value[i], 16),
-                nextCode;
-            if (i == len - 1) {
-                nextCode = null;
-            } else {
-                nextCode = parseInt(value[i + 1], 16);
-            }
-            if (nextCode !== null) {
-                code = (code << 4) | nextCode;
-            }
-            this.view.setUint8(startOffset, code);
-            startOffset++;
+    writeAsciiString(value) {
+        value = value || "";
+        var len = value.length;
+        this.checkSize(len);
+        var startOffset = this.offset;
+        for (let i = 0; i < len; i++) {
+            const charCode = value.charCodeAt(i);
+            this.view.setUint8(startOffset + i, charCode);
         }
-        return this.increment(blen);
+        return this.increment(len);
+    }
+
+    readBigUint64() {
+        var val = this.view.getBigUint64(this.offset, this.isLittleEndian);
+        this.increment(8);
+        return val;
     }
 
     readUint32() {
@@ -170,10 +217,29 @@ class BufferStream {
         return val;
     }
 
+    peekUint8(offset) {
+        return this.view.getUint8(this.offset + offset);
+    }
+
     readUint8Array(length) {
-        var arr = new Uint8Array(this.buffer, this.offset, length);
+        if (this.offset + length > this.endOffset) {
+            throw new Error(
+                `Stream has insufficient data: requested ${length} bytes at offset ${
+                    this.offset
+                }, but only ${
+                    this.endOffset - this.offset
+                } bytes available (endOffset ${this.endOffset})`
+            );
+        }
+        const arr = new Uint8Array(
+            this.view.slice(this.offset, this.offset + length)
+        );
         this.increment(length);
         return arr;
+    }
+
+    readArrayBuffer(length) {
+        return this.readUint8Array(length).buffer;
     }
 
     readUint16Array(length) {
@@ -185,6 +251,12 @@ class BufferStream {
             this.offset += 2;
         }
         return arr;
+    }
+
+    readInt8() {
+        var val = this.view.getInt8(this.offset, this.isLittleEndian);
+        this.increment(1);
+        return val;
     }
 
     readInt16() {
@@ -211,17 +283,38 @@ class BufferStream {
         return val;
     }
 
-    readString(length) {
-        var string = "";
-
-        var numOfMulti = length,
-            index = 0;
-        while (index++ < numOfMulti) {
-            var charCode = this.readUint8();
-            string += String.fromCharCode(charCode);
+    readAsciiString(length) {
+        var result = "";
+        var start = this.offset;
+        var end = this.offset + length;
+        if (end >= this.view.byteLength) {
+            end = this.view.byteLength;
         }
+        for (let i = start; i < end; ++i) {
+            result += String.fromCharCode(this.view.getUint8(i));
+        }
+        this.increment(end - start);
+        return result;
+    }
 
-        return string;
+    readVR() {
+        var vr =
+            String.fromCharCode(this.view.getUint8(this.offset)) +
+            String.fromCharCode(this.view.getUint8(this.offset + 1));
+        this.increment(2);
+        return vr;
+    }
+
+    readEncodedString(length) {
+        if (this.offset + length >= this.view.byteLength) {
+            length = this.view.byteLength - this.offset;
+        }
+        const view = new DataView(
+            this.slice(this.offset, this.offset + length)
+        );
+        const result = this.decoder.decode(view);
+        this.increment(length);
+        return result;
     }
 
     readHex(length) {
@@ -233,27 +326,23 @@ class BufferStream {
     }
 
     checkSize(step) {
-        if (this.offset + step > this.buffer.byteLength) {
-            //throw new Error("Writing exceeded the size of buffer");
-            //resize
-            var dstSize = this.offset + step;
-            var dst = new ArrayBuffer(dstSize);
-            new Uint8Array(dst).set(new Uint8Array(this.buffer));
-            this.buffer = dst;
-            this.view = new DataView(this.buffer);
-        }
+        this.view.checkSize(this.offset + step);
     }
 
+    /**
+     * Concatenates the stream, starting from the startOffset (to allow concat
+     * on an existing output from the beginning)
+     */
     concat(stream) {
-        var newbuf = new ArrayBuffer(this.offset + stream.size),
-            int8 = new Uint8Array(newbuf);
-        int8.set(new Uint8Array(this.getBuffer(0, this.offset)));
-        int8.set(new Uint8Array(stream.getBuffer(0, stream.size)), this.offset);
-        this.buffer = newbuf;
-        this.view = new DataView(this.buffer);
+        this.view.checkSize(this.size + stream.size - stream.startOffset);
+        this.view.writeBuffer(
+            new Uint8Array(stream.slice(stream.startOffset, stream.size)),
+            this.offset
+        );
         this.offset += stream.size;
         this.size = this.offset;
-        return this.buffer.byteLength;
+        this.endOffset = this.size;
+        return this.view.availableSize;
     }
 
     increment(step) {
@@ -264,23 +353,87 @@ class BufferStream {
         return step;
     }
 
-    getBuffer(start, end) {
-        if (!start && !end) {
-            start = 0;
-            end = this.size;
+    /**
+     * Reads from an async stream delivering to addBuffer.
+     */
+    async fromAsyncStream(stream) {
+        for await (const chunk of stream) {
+            const ab = chunk.buffer.slice(
+                chunk.byteOffset,
+                chunk.byteOffset + chunk.byteLength
+            );
+            this.addBuffer(ab);
         }
+        this.setComplete();
+    }
 
-        return this.buffer.slice(start, end);
+    /**
+     * Adds the buffer to the end of the current buffers list,
+     * updating the size etc.
+     *
+     * @param {*} buffer
+     * @param {*} options.start for the start of the new buffer to use
+     * @param {*} options.end for the end of the buffer to use
+     * @param {*} options.transfer to transfer the buffer to be owned
+     *     Transfer will default true if the entire buffer is being added.
+     *     It should be set explicitly to false to NOT transfer.
+     */
+    addBuffer(buffer, options = null) {
+        if (!buffer) {
+            // Silently ignore null buffers.
+            return;
+        }
+        this.view.addBuffer(buffer, options);
+        this.size = this.view.size;
+        this.endOffset = this.size;
+        this.notifyAvailableListeners();
+        return this.size;
+    }
+
+    notifyAvailableListeners() {
+        const existingListeners = [...this.availableListeners];
+        this.availableListeners.splice(0, this.availableListeners.length);
+        existingListeners.forEach(listener => listener());
+    }
+
+    /**
+     * Consumes the data up to the given offset.
+     * This will clear the references to the data buffers, and will
+     * cause resets etc to fail.
+     * The default offset is the current position, so everything already read.
+     */
+    consume(offset = this.offset) {
+        if (!this.clearBuffers) {
+            return;
+        }
+        this.view.consume(offset);
+    }
+
+    /**
+     * Returns true if the stream has data in the given range.
+     */
+    hasData(start, end = start + 1) {
+        return this.view.hasData(start, end);
     }
 
     more(length) {
-        if (this.offset + length > this.buffer.byteLength) {
+        if (this.offset + length > this.endOffset) {
             throw new Error("Request more than currently allocated buffer");
         }
 
-        var newBuf = this.buffer.slice(this.offset, this.offset + length);
+        // Optimize the more implementation to choose between a slice and
+        // a sub-string reference to the original set of views.
+        // const newBuf = new ReadBufferStream(this.buffer, null, {
+        //   start: this.offset,
+        //   stop: this.offset + length
+        // });
+        const newBuf = new ReadBufferStream(
+            this.slice(this.offset, this.offset + length)
+        );
         this.increment(length);
-        return new ReadBufferStream(newBuf);
+        newBuf.setComplete();
+
+        return newBuf;
     }
 
     reset() {
@@ -289,27 +442,142 @@ class BufferStream {
     }
 
     end() {
-        return this.offset >= this.buffer.byteLength;
+        return this.isComplete && this.offset >= this.end;
     }
 
     toEnd() {
-        this.offset = this.buffer.byteLength;
+        this.offset = this.view.byteLength;
+    }
+
+    /**
+     * Reports on the amount of memory held by the buffers in the view.
+     * @returns {Object} An object containing:
+     *   - bufferCount: Number of buffers still held (not null)
+     *   - totalSize: Total size of all buffers in bytes
+     *   - consumeOffset: The current consume offset
+     *   - buffersBeforeOffset: Number of buffers before the consume offset
+     */
+    getBufferMemoryInfo() {
+        return this.view.getBufferMemoryInfo(this.offset);
     }
 }
 
-class ReadBufferStream extends BufferStream {
-    constructor(buffer, littleEndian) {
-        super(buffer, littleEndian);
-        this.size = this.buffer.byteLength;
+export class ReadBufferStream extends BufferStream {
+    constructor(
+        buffer,
+        littleEndian,
+        options = {
+            start: null,
+            stop: null,
+            noCopy: false
+        }
+    ) {
+        super({ ...options, littleEndian });
+        this.noCopy = options.noCopy;
+        this.decoder = new TextDecoder("latin1");
+
+        if (buffer instanceof BufferStream) {
+            this.view.from(buffer.view, options);
+            this.isComplete = true;
+        } else if (buffer) {
+            this.view.addBuffer(buffer);
+            this.isComplete = true;
+        }
+        this.offset = options.start ?? buffer?.offset ?? 0;
+        this.size = options.stop || buffer?.size || buffer?.byteLength || 0;
+
+        this.startOffset = this.offset;
+        this.endOffset = this.size;
+    }
+
+    setDecoder(decoder) {
+        this.decoder = decoder;
+    }
+
+    reset() {
+        this.offset = this.startOffset;
+        return this;
+    }
+
+    end() {
+        return this.isComplete && this.offset >= this.endOffset;
+    }
+
+    toEnd() {
+        this.offset = this.endOffset;
+    }
+
+    writeUint8(value) {
+        throw new Error(value, "writeUint8 not implemented");
+    }
+
+    writeUint8Repeat(value, count) {
+        throw new Error(
+            `writeUint8Repeat not implemented (value: ${value}, count: ${count})`
+        );
+    }
+
+    writeInt8(value) {
+        throw new Error(value, "writeInt8 not implemented");
+    }
+
+    writeUint16(value) {
+        throw new Error(value, "writeUint16 not implemented");
+    }
+
+    writeTwoUint16s(value) {
+        throw new Error(value, "writeTwoUint16s not implemented");
+    }
+
+    writeInt16(value) {
+        throw new Error(value, "writeInt16 not implemented");
+    }
+
+    writeUint32(value) {
+        throw new Error(value, "writeUint32 not implemented");
+    }
+
+    writeInt32(value) {
+        throw new Error(value, "writeInt32 not implemented");
+    }
+
+    writeFloat(value) {
+        throw new Error(value, "writeFloat not implemented");
+    }
+
+    writeDouble(value) {
+        throw new Error(value, "writeDouble not implemented");
+    }
+
+    writeAsciiString(value) {
+        throw new Error(value, "writeAsciiString not implemented");
+    }
+
+    writeUTF8String(value) {
+        throw new Error(value, "writeUTF8String not implemented");
+    }
+
+    checkSize(step) {
+        throw new Error(step, "checkSize not implemented");
+    }
+
+    concat(stream) {
+        throw new Error(stream, "concat not implemented");
     }
 }
 
-class WriteBufferStream extends BufferStream {
-    constructor(buffer, littleEndian) {
-        super(buffer, littleEndian);
+export class DeflatedReadBufferStream extends ReadBufferStream {
+    constructor(stream, options) {
+        const inflatedBuffer = pako.inflateRaw(
+            stream.getBuffer(stream.offset, stream.size)
+        );
+        super(inflatedBuffer.buffer, stream.littleEndian, options);
+    }
+}
+
+export class WriteBufferStream extends BufferStream {
+    constructor(defaultSize, littleEndian) {
+        super({ defaultSize, littleEndian });
         this.size = 0;
     }
 }
-
-export { ReadBufferStream };
-export { WriteBufferStream };

@@ -1,11 +1,32 @@
-import TID1500 from "./TID1500/index.js";
-import TID300 from "./TID300/index.js";
-import message from "./Message.js";
+import TID1500 from "./TID1500";
+import TID300 from "./TID300";
+import message from "./Message";
+import addAccessors from "./addAccessors";
+import dicomJson from "./dicomJson";
+import * as orientation from "./orientation";
+import * as compression from "./compression/rleSingleSamplePerPixel";
+import {
+    DicomMetadataListener,
+    createInformationFilter
+} from "./DicomMetadataListener";
+import { ArrayBufferExpanderFilter } from "./ArrayBufferExpanderListener";
+import { toFloat } from "./toFloat";
+import { toInt } from "./toInt";
 
 const utilities = {
     TID1500,
     TID300,
-    message
+    message,
+    addAccessors,
+    orientation,
+    compression,
+    dicomJson,
+    DicomMetadataListener,
+    ArrayBufferExpanderFilter,
+    toFloat,
+    toInt,
+    createInformationFilter
 };
 
 export default utilities;
+export { utilities };

@@ -1,4 +1,5 @@
 import { CodedConcept } from "./coding.js";
+import addAccessors from "../utilities/addAccessors.js";
 
 const ValueTypes = {
     CODE: "CODE",
@@ -70,10 +71,6 @@ function isFloat(n) {
     return n === +n && n !== (n | 0);
 }
 
-function isInteger(n) {
-    return n === +n && n === (n | 0);
-}
-
 function zeroPad(value) {
     return (value > 9 ? "" : "0") + value;
 }
@@ -112,10 +109,10 @@ class ContentItem {
         if (options.name === undefined) {
             throw new Error("Option 'name' is required for ContentItem.");
         }
-        if (options.name.constructor !== CodedConcept) {
+        if (!(options.name instanceof CodedConcept)) {
             throw new Error("Option 'name' must have type CodedConcept.");
         }
-        this.ConceptNameCodeSequence = [options.name];
+        this.ConceptNameCodeSequence = addAccessors([options.name]);
         if (options.valueType === undefined) {
             throw new Error("Option 'valueType' is required for ContentItem.");
         }
@@ -156,10 +153,10 @@ class CodeContentItem extends ContentItem {
         if (options.value === undefined) {
             throw new Error("Option 'value' is required for CodeContentItem.");
         }
-        if (!(options.value || options.value.constructor === CodedConcept)) {
+        if (!(options.value instanceof CodedConcept)) {
             throw new Error("Option 'value' must have type CodedConcept.");
         }
-        this.ConceptCodeSequence = [options.value];
+        this.ConceptCodeSequence = addAccessors([options.value]);
     }
 }
 
@@ -271,7 +268,7 @@ class DateTimeContentItem extends ContentItem {
         ) {
             throw new Error("Option 'value' must have type Date.");
         }
-        this.DateTime = DT(otions.value);
+        this.DateTime = DT(options.value);
     }
 }
 
@@ -320,20 +317,18 @@ class NumContentItem extends ContentItem {
                     "Option 'unit' is required for NumContentItem with 'value'."
                 );
             }
+            if (!(options.unit instanceof CodedConcept)) {
+                throw new Error("Option 'unit' must have type CodedConcept.");
+            }
             const item = {};
             item.NumericValue = options.value;
             if (isFloat(options.value)) {
                 item.FloatingPointValue = options.value;
             }
-            item.MeasurementUnitsCodeSequence = options.unit;
+            item.MeasurementUnitsCodeSequence = [options.unit];
             this.MeasuredValueSequence = [item];
         } else if (options.qualifier !== undefined) {
-            if (
-                !(
-                    options.qualifier ||
-                    options.qualifier.constructor === CodedConcept
-                )
-            ) {
+            if (!(options.qualifier instanceof CodedConcept)) {
                 throw new Error(
                     "Option 'qualifier' must have type CodedConcept."
                 );
@@ -535,7 +530,10 @@ class ScoordContentItem extends ContentItem {
         if (options.graphicData[0] instanceof Array) {
             options.graphicData = [].concat.apply([], options.graphicData);
         }
+
+        this.GraphicType = options.graphicType;
         this.GraphicData = options.graphicData;
+
         options.pixelOriginInterpretation =
             options.pixelOriginInterpretation ||
             PixelOriginInterpretations.VOLUME;
@@ -555,9 +553,7 @@ class ScoordContentItem extends ContentItem {
             ) === -1
         ) {
             throw new Error(
-                `Invalid pixel origin interpretation '${
-                    options.pixelOriginInterpretation
-                }'.`
+                `Invalid pixel origin interpretation '${options.pixelOriginInterpretation}'.`
             );
         }
         if (options.fiducialUID !== undefined) {
@@ -640,7 +636,7 @@ class Scoord3DContentItem extends ContentItem {
             ) {
                 throw new Error("Option 'fiducialUID' must have type String.");
             }
-            this.FiducialUID = fiducialUID;
+            this.FiducialUID = options.fiducialUID;
         }
     }
 }

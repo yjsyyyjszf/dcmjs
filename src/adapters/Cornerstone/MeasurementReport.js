@@ -3,8 +3,26 @@ import { DicomMetaDictionary } from "../../DicomMetaDictionary.js";
 import { StructuredReport } from "../../derivations/index.js";
 import TID1500MeasurementReport from "../../utilities/TID1500/TID1500MeasurementReport.js";
 import TID1501MeasurementGroup from "../../utilities/TID1500/TID1501MeasurementGroup.js";
+import addAccessors from "../../utilities/addAccessors.js";
 
 import { toArray, codeMeaningEquals } from "../helpers.js";
+
+const FINDING = { CodingSchemeDesignator: "DCM", CodeValue: "121071" };
+const FINDING_SITE = { CodingSchemeDesignator: "SCT", CodeValue: "363698007" };
+const FINDING_SITE_OLD = { CodingSchemeDesignator: "SRT", CodeValue: "G-C0E3" };
+
+const codeValueMatch = (group, code, oldCode) => {
+    const { ConceptNameCodeSequence } = group;
+    if (!ConceptNameCodeSequence) return;
+    const { CodingSchemeDesignator, CodeValue } = ConceptNameCodeSequence;
+    return (
+        (CodingSchemeDesignator == code.CodingSchemeDesignator &&
+            CodeValue == code.CodeValue) ||
+        (oldCode &&
+            CodingSchemeDesignator == oldCode.CodingSchemeDesignator &&
+            CodeValue == oldCode.CodeValue)
+    );
+};
 
 function getTID300ContentItem(
     tool,
@@ -50,6 +68,60 @@ function getMeasurementGroup(toolType, toolData, ReferencedSOPSequence) {
 export default class MeasurementReport {
     constructor() {}
 
+    static getSetupMeasurementData(MeasurementGroup) {
+        const { ContentSequence } = MeasurementGroup;
+
+        const contentSequenceArr = toArray(ContentSequence);
+        const findingGroup = contentSequenceArr.find(group =>
+            codeValueMatch(group, FINDING)
+        );
+        const findingSiteGroups =
+            contentSequenceArr.filter(group =>
+                codeValueMatch(group, FINDING_SITE, FINDING_SITE_OLD)
+            ) || [];
+        const NUMGroup = contentSequenceArr.find(
+            group => group.ValueType === "NUM"
+        );
+        const SCOORDGroup = toArray(NUMGroup.ContentSequence).find(
+            group => group.ValueType === "SCOORD"
+        );
+        const { ReferencedSOPSequence } = SCOORDGroup.ContentSequence;
+        const { ReferencedSOPInstanceUID, ReferencedFrameNumber } =
+            ReferencedSOPSequence;
+
+        const defaultState = {
+            sopInstanceUid: ReferencedSOPInstanceUID,
+            frameIndex: ReferencedFrameNumber || 1,
+            complete: true,
+            finding: findingGroup
+                ? addAccessors(findingGroup.ConceptCodeSequence)
+                : undefined,
+            findingSites: findingSiteGroups.map(fsg => {
+                return addAccessors(fsg.ConceptCodeSequence);
+            })
+        };
+        if (defaultState.finding) {
+            defaultState.description = defaultState.finding.CodeMeaning;
+        }
+        const findingSite =
+            defaultState.findingSites && defaultState.findingSites[0];
+        if (findingSite) {
+            defaultState.location =
+                (findingSite[0] && findingSite[0].CodeMeaning) ||
+                findingSite.CodeMeaning;
+        }
+        return {
+            defaultState,
+            findingGroup,
+            findingSiteGroups,
+            NUMGroup,
+            SCOORDGroup,
+            ReferencedSOPSequence,
+            ReferencedSOPInstanceUID,
+            ReferencedFrameNumber
+        };
+    }
+
     static generateReport(toolState, metadataProvider, options) {
         // ToolState for array of imageIDs to a Report
         // Assume Cornerstone metadata provider has access to Study / Series / Sop Instance UID
@@ -61,15 +133,21 @@ export default class MeasurementReport {
         }
 
         /* Patient ID
-    Warning - Missing attribute or value that would be needed to build DICOMDIR - Patient ID
-    Warning - Missing attribute or value that would be needed to build DICOMDIR - Study Date
-    Warning - Missing attribute or value that would be needed to build DICOMDIR - Study Time
-    Warning - Missing attribute or value that would be needed to build DICOMDIR - Study ID */
+        Warning - Missing attribute or value that would be needed to build DICOMDIR - Patient ID
+        Warning - Missing attribute or value that would be needed to build DICOMDIR - Study Date
+        Warning - Missing attribute or value that would be needed to build DICOMDIR - Study Time
+        Warning - Missing attribute or value that would be needed to build DICOMDIR - Study ID
+         */
         const generalSeriesModule = metadataProvider.get(
             "generalSeriesModule",
             firstImageId
         );
+
         //const sopCommonModule = metadataProvider.get('sopCommonModule', firstImageId);
+
+        // NOTE: We are getting the Series and Study UIDs from the first imageId of the toolState
+        // which means that if the toolState is for multiple series, the report will have the incorrect
+        // SeriesInstanceUIDs
         const { studyInstanceUID, seriesInstanceUID } = generalSeriesModule;
 
         // Loop through each image in the toolData
@@ -107,9 +185,8 @@ export default class MeasurementReport {
                 }
             });
 
-            allMeasurementGroups = allMeasurementGroups.concat(
-                measurementGroups
-            );
+            allMeasurementGroups =
+                allMeasurementGroups.concat(measurementGroups);
         });
 
         const MeasurementReport = new TID1500MeasurementReport(
@@ -159,6 +236,7 @@ export default class MeasurementReport {
         derivationSourceDataset._vrMap = _vrMap;
 
         const report = new StructuredReport([derivationSourceDataset]);
+
         const contentItem = MeasurementReport.contentItem(
             derivationSourceDataset
         );
@@ -170,7 +248,14 @@ export default class MeasurementReport {
         return report;
     }
 
-    static generateToolState(dataset) {
+    /**
+     * Generate Cornerstone tool state from dataset
+     * @param {object} dataset dataset
+     * @param {object} hooks
+     * @param {function} hooks.getToolClass Function to map dataset to a tool class
+     * @returns
+     */
+    static generateToolState(dataset, hooks = {}) {
         // For now, bail out if the dataset is not a TID1500 SR with length measurements
         if (dataset.ContentTemplateSequence.TemplateIdentifier !== "1500") {
             throw new Error(
@@ -180,6 +265,7 @@ export default class MeasurementReport {
 
         const REPORT = "Imaging Measurements";
         const GROUP = "Measurement Group";
+        const TRACKING_IDENTIFIER = "Tracking Identifier";
 
         // Identify the Imaging Measurements
         const imagingMeasurementContent = toArray(dataset.ContentSequence).find(
@@ -187,48 +273,62 @@ export default class MeasurementReport {
         );
 
         // Retrieve the Measurements themselves
-        const measurementGroupContent = toArray(
+        const measurementGroups = toArray(
             imagingMeasurementContent.ContentSequence
-        ).find(codeMeaningEquals(GROUP));
+        ).filter(codeMeaningEquals(GROUP));
 
         // For each of the supported measurement types, compute the measurement data
         const measurementData = {};
 
-        Object.keys(
-            MeasurementReport.CORNERSTONE_TOOL_CLASSES_BY_UTILITY_TYPE
-        ).forEach(measurementType => {
-            // Filter to find supported measurement types in the Structured Report
-            const measurementGroups = toArray(
-                measurementGroupContent.ContentSequence
-            );
-            const measurementContent = measurementGroups.filter(
-                codeMeaningEquals(measurementType)
-            );
-            if (!measurementContent) {
-                return;
-            }
+        const cornerstoneToolClasses =
+            MeasurementReport.CORNERSTONE_TOOL_CLASSES_BY_UTILITY_TYPE;
 
-            const toolClass =
-                MeasurementReport.CORNERSTONE_TOOL_CLASSES_BY_UTILITY_TYPE[
-                    measurementType
-                ];
-            const toolType = toolClass.toolType;
+        const registeredToolClasses = [];
 
-            if (!toolClass.getMeasurementData) {
-                throw new Error(
-                    "Cornerstone Tool Adapters must define a getMeasurementData static method."
-                );
-            }
-
-            // Retrieve Length Measurement Data
-            measurementData[toolType] = toolClass.getMeasurementData(
-                measurementContent
-            );
+        Object.keys(cornerstoneToolClasses).forEach(key => {
+            registeredToolClasses.push(cornerstoneToolClasses[key]);
+            measurementData[key] = [];
         });
 
-        // TODO: Find a way to define 'how' to get an imageId ?
-        // Need to provide something to generate imageId from Study / Series / Sop Instance UID
-        // combine / reorganize all the toolData into the expected toolState format for Cornerstone Tools
+        measurementGroups.forEach(measurementGroup => {
+            const measurementGroupContentSequence = toArray(
+                measurementGroup.ContentSequence
+            );
+
+            const TrackingIdentifierGroup =
+                measurementGroupContentSequence.find(
+                    contentItem =>
+                        contentItem.ConceptNameCodeSequence.CodeMeaning ===
+                        TRACKING_IDENTIFIER
+                );
+
+            const TrackingIdentifierValue = TrackingIdentifierGroup.TextValue;
+
+            const toolClass = hooks.getToolClass
+                ? hooks.getToolClass(
+                      measurementGroup,
+                      dataset,
+                      registeredToolClasses
+                  )
+                : registeredToolClasses.find(tc =>
+                      tc.isValidCornerstoneTrackingIdentifier(
+                          TrackingIdentifierValue
+                      )
+                  );
+
+            if (toolClass) {
+                const measurement =
+                    toolClass.getMeasurementData(measurementGroup);
+
+                console.log(`=== ${toolClass.toolType} ===`);
+                console.log(measurement);
+
+                measurementData[toolClass.toolType].push(measurement);
+            }
+        });
+
+        // NOTE: There is no way of knowing the cornerstone imageIds as that could be anything.
+        // That is up to the consumer to derive from the SOPInstanceUIDs.
         return measurementData;
     }
 

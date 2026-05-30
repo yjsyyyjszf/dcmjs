@@ -72,12 +72,14 @@ function geometryFromFunctionalGroups(dataset, PerFrameFunctionalGroups) {
     const firstFunctionalGroup = PerFrameFunctionalGroups[0];
     const lastFunctionalGroup =
         PerFrameFunctionalGroups[PerFrameFunctionalGroups.length - 1];
-    const firstPosition = firstFunctionalGroup.PlanePositionSequence.ImagePositionPatient.map(
-        Number
-    );
-    const lastPosition = lastFunctionalGroup.PlanePositionSequence.ImagePositionPatient.map(
-        Number
-    );
+    const firstPosition =
+        firstFunctionalGroup.PlanePositionSequence.ImagePositionPatient.map(
+            Number
+        );
+    const lastPosition =
+        lastFunctionalGroup.PlanePositionSequence.ImagePositionPatient.map(
+            Number
+        );
 
     geometry.origin = firstPosition;
 
@@ -159,6 +161,7 @@ export default class Segmentation {
             dataset.SegmentSequence = [dataset.SegmentSequence];
         }
 
+        const segments = {};
         dataset.SegmentSequence.forEach(segment => {
             // TODO: other interesting fields could be extracted from the segment
             // TODO: Read SegmentsOverlay field

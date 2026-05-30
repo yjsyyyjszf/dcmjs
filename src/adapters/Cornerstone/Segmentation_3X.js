@@ -1,4 +1,4 @@
-import log from "loglevelnext";
+import log from "../../log.js";
 import ndarray from "ndarray";
 import { BitArray } from "../../bitArray.js";
 import { datasetToBlob } from "../../datasetToBlob.js";
@@ -63,10 +63,8 @@ function generateSegmentation(
     const isMultiframe = image0.imageId.includes("?frame");
     const seg = _createSegFromImages(images, isMultiframe, options);
 
-    const {
-        referencedFramesPerSegment,
-        segmentIndicies
-    } = _getNumberOfFramesPerSegment(toolState, images, segments);
+    const { referencedFramesPerSegment, segmentIndicies } =
+        _getNumberOfFramesPerSegment(toolState, images, segments);
 
     let NumberOfFrames = 0;
 
@@ -265,10 +263,11 @@ function generateToolState(imageIds, arrayBuffer, metadataProvider) {
     const SharedFunctionalGroupsSequence =
         multiframe.SharedFunctionalGroupsSequence;
 
-    const sharedImageOrientationPatient = SharedFunctionalGroupsSequence.PlaneOrientationSequence
-        ? SharedFunctionalGroupsSequence.PlaneOrientationSequence
-              .ImageOrientationPatient
-        : undefined;
+    const sharedImageOrientationPatient =
+        SharedFunctionalGroupsSequence.PlaneOrientationSequence
+            ? SharedFunctionalGroupsSequence.PlaneOrientationSequence
+                  .ImageOrientationPatient
+            : undefined;
 
     const sliceLength = multiframe.Columns * multiframe.Rows;
     const segMetadata = getSegmentMetadata(multiframe);
@@ -416,8 +415,6 @@ function addImageIdSpecificBrushToolState(
 
     const cToolsPixelData = brushDataI.pixelData;
 
-    const [rows, cols] = pixelData2D.shape;
-
     for (let p = 0; p < cToolsPixelData.length; p++) {
         if (pixelData2D.data[p]) {
             cToolsPixelData[p] = 1;
@@ -441,10 +438,8 @@ function getImageIdOfSourceImage(
     imageIds,
     metadataProvider
 ) {
-    const {
-        ReferencedSOPInstanceUID,
-        ReferencedFrameNumber
-    } = SourceImageSequence;
+    const { ReferencedSOPInstanceUID, ReferencedFrameNumber } =
+        SourceImageSequence;
 
     return ReferencedFrameNumber
         ? getImageIdOfReferencedFrame(

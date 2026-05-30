@@ -1,6 +1,7 @@
-import log from "loglevelnext";
+import log from "./log.js";
 import { DicomMetaDictionary } from "./DicomMetaDictionary.js";
 import { DerivedImage } from "./derivations/index.js";
+import Segmentation from "./derivations/Segmentation.js";
 
 class Normalizer {
     constructor(datasets) {
@@ -11,7 +12,7 @@ class Normalizer {
     static consistentSOPClassUIDs(datasets) {
         // return sopClassUID if all exist and match, otherwise undefined
         let sopClassUID;
-        datasets.forEach(function(dataset) {
+        datasets.forEach(function (dataset) {
             if (!dataset.SOPClassUID) {
                 return undefined;
             }
@@ -34,31 +35,34 @@ class Normalizer {
         sopClassUID = sopClassUID.replace(/[^0-9.]/g, ""); // TODO: clean all VRs as part of normalizing
         let toUID = DicomMetaDictionary.sopClassUIDsByName;
         let sopClassUIDMap = {};
+        sopClassUIDMap[toUID.NMImage] = NMImageNormalizer;
         sopClassUIDMap[toUID.CTImage] = CTImageNormalizer;
         sopClassUIDMap[toUID.ParametricMapStorage] = PMImageNormalizer;
         sopClassUIDMap[toUID.MRImage] = MRImageNormalizer;
         sopClassUIDMap[toUID.EnhancedCTImage] = EnhancedCTImageNormalizer;
-        sopClassUIDMap[
-            toUID.LegacyConvertedEnhancedCTImage
-        ] = EnhancedCTImageNormalizer;
+        sopClassUIDMap[toUID.LegacyConvertedEnhancedCTImage] =
+            EnhancedCTImageNormalizer;
         sopClassUIDMap[toUID.EnhancedMRImage] = EnhancedMRImageNormalizer;
-        sopClassUIDMap[
-            toUID.LegacyConvertedEnhancedMRImage
-        ] = EnhancedMRImageNormalizer;
+        sopClassUIDMap[toUID.LegacyConvertedEnhancedMRImage] =
+            EnhancedMRImageNormalizer;
         sopClassUIDMap[toUID.EnhancedUSVolume] = EnhancedUSVolumeNormalizer;
         sopClassUIDMap[toUID.PETImage] = PETImageNormalizer;
         sopClassUIDMap[toUID.EnhancedPETImage] = PETImageNormalizer;
-        sopClassUIDMap[
-            toUID.LegacyConvertedEnhancedPETImage
-        ] = PETImageNormalizer;
+        sopClassUIDMap[toUID.LegacyConvertedEnhancedPETImage] =
+            PETImageNormalizer;
         sopClassUIDMap[toUID.Segmentation] = SEGImageNormalizer;
         sopClassUIDMap[toUID.DeformableSpatialRegistration] = DSRNormalizer;
+        sopClassUIDMap[toUID.OphthalmicPhotography8BitImage] =
+            OPImageNormalizer;
+        sopClassUIDMap[toUID.OphthalmicTomographyImage] = OCTImageNormalizer;
+        sopClassUIDMap[toUID.LabelmapSegmentation] = SEGImageNormalizer; // Labelmap Segmentation uses the same normalizer as Segmentation
         return sopClassUIDMap[sopClassUID];
     }
 
     static isMultiframeSOPClassUID(sopClassUID) {
         const toUID = DicomMetaDictionary.sopClassUIDsByName;
         const multiframeSOPClasses = [
+            toUID.NMImage,
             toUID.EnhancedMRImage,
             toUID.LegacyConvertedEnhancedMRImage,
             toUID.EnhancedCTImage,
@@ -67,7 +71,9 @@ class Normalizer {
             toUID.EnhancedPETImage,
             toUID.LegacyConvertedEnhancedPETImage,
             toUID.Segmentation,
-            toUID.ParametricMapStorage
+            toUID.ParametricMapStorage,
+            toUID.OphthalmicTomographyImage,
+            toUID.LabelmapSegmentation // Labelmap Segmentation SOP Class UID
         ];
         return multiframeSOPClasses.indexOf(sopClassUID) !== -1;
     }
@@ -172,7 +178,7 @@ class ImageNormalizer extends Normalizer {
             columnVector
         );
         let distanceDatasetPairs = [];
-        this.datasets.forEach(function(dataset) {
+        this.datasets.forEach(function (dataset) {
             let position = dataset.ImagePositionPatient.slice();
             let positionVector = ImageNormalizer.vec3Subtract(
                 position,
@@ -181,7 +187,7 @@ class ImageNormalizer extends Normalizer {
             let distance = ImageNormalizer.vec3Dot(positionVector, scanAxis);
             distanceDatasetPairs.push([distance, dataset]);
         });
-        distanceDatasetPairs.sort(function(a, b) {
+        distanceDatasetPairs.sort(function (a, b) {
             return b[0] - a[0];
         });
 
@@ -201,7 +207,7 @@ class ImageNormalizer extends Normalizer {
         let frameSize = referenceDataset.PixelData.byteLength;
         ds.PixelData = new ArrayBuffer(ds.NumberOfFrames * frameSize);
         let frame = 0;
-        distanceDatasetPairs.forEach(function(pair) {
+        distanceDatasetPairs.forEach(function (pair) {
             let dataset = pair[1];
             let pixels = new Uint16Array(dataset.PixelData);
             let frameView = new Uint16Array(
@@ -213,14 +219,13 @@ class ImageNormalizer extends Normalizer {
                 frameView.set(pixels);
             } catch (e) {
                 if (e instanceof RangeError) {
-                    log.error("Error inserting pixels in PixelData");
-                    log.error("frameSize", frameSize);
-                    log.error("NumberOfFrames", ds.NumberOfFrames);
-                    log.error("pair", pair);
-                    log.error(
-                        "dataset PixelData size",
-                        dataset.PixelData.length
-                    );
+                    const message =
+                        "Error inserting pixels in PixelData\n" +
+                        `frameSize ${frameSize}\n` +
+                        `NumberOfFrames ${ds.NumberOfFrames}\n` +
+                        `pair ${pair}\n` +
+                        `dataset PixelData size ${dataset.PixelData.length}`;
+                    log.error(message);
                 }
             }
             frame++;
@@ -262,12 +267,12 @@ class ImageNormalizer extends Normalizer {
 
         // copy over each datasets window/level into the per-frame groups
         // and set the referenced series uid
-        this.datasets.forEach(function(dataset, datasetIndex) {
+        distanceDatasetPairs.forEach(function (pair) {
+            const dataset = pair[1];
+
             ds.PerFrameFunctionalGroupsSequence.push({
                 PlanePositionSequence: {
-                    ImagePositionPatient:
-                        distanceDatasetPairs[datasetIndex][1]
-                            .ImagePositionPatient
+                    ImagePositionPatient: dataset.ImagePositionPatient
                 },
                 FrameVOILUTSequence: {
                     WindowCenter: dataset.WindowCenter,
@@ -392,7 +397,7 @@ class ImageNormalizer extends Normalizer {
             // provide a volume-level window/level guess (mean of per-frame)
             if (ds.PerFrameFunctionalGroupsSequence) {
                 let wcww = { center: 0, width: 0, count: 0 };
-                ds.PerFrameFunctionalGroupsSequence.forEach(function(
+                ds.PerFrameFunctionalGroupsSequence.forEach(function (
                     functionalGroup
                 ) {
                     if (functionalGroup.FrameVOILUT) {
@@ -451,7 +456,7 @@ class MRImageNormalizer extends ImageNormalizer {
             ds.ImageType = ["ORIGINAL", "PRIMARY", "OTHER", "NONE"];
         }
 
-        ds.SharedFunctionalGroupsSequence.MRImageFrameType = {
+        ds.SharedFunctionalGroupsSequence.MRImageFrameTypeSequence = {
             FrameType: ds.ImageType,
             PixelPresentation: "MONOCHROME",
             VolumetricProperties: "VOLUME",
@@ -477,6 +482,15 @@ class EnhancedMRImageNormalizer extends ImageNormalizer {
 class EnhancedUSVolumeNormalizer extends ImageNormalizer {
     normalize() {
         super.normalize();
+    }
+}
+class NMImageNormalizer extends ImageNormalizer {
+    normalize() {
+        super.normalize();
+        // TODO: provide option at export to swap in LegacyConverted UID
+        let toUID = DicomMetaDictionary.sopClassUIDsByName;
+
+        this.dataset.SOPClassUID = toUID.NMImage;
     }
 }
 
@@ -524,14 +538,32 @@ class DSRNormalizer extends Normalizer {
     }
 }
 
+class OPImageNormalizer extends Normalizer {
+    normalize() {
+        this.dataset = this.datasets[0]; // only one dataset per series and for now we assume it is normalized
+    }
+}
+
+class OCTImageNormalizer extends ImageNormalizer {
+    normalize() {
+        super.normalize();
+    }
+}
+
+// Avoid import loops
+Segmentation.setNormalizer(Normalizer);
+
 export { Normalizer };
 export { ImageNormalizer };
 export { MRImageNormalizer };
 export { EnhancedCTImageNormalizer };
 export { EnhancedMRImageNormalizer };
 export { EnhancedUSVolumeNormalizer };
+export { NMImageNormalizer };
 export { CTImageNormalizer };
 export { PETImageNormalizer };
 export { SEGImageNormalizer };
 export { PMImageNormalizer };
 export { DSRNormalizer };
+export { OPImageNormalizer };
+export { OCTImageNormalizer };

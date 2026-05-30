@@ -1,55 +1,60 @@
-import { paddingLeft } from "./ValueRepresentation.js";
-import { ValueRepresentation } from "./ValueRepresentation.js";
-import { DicomMessage } from "./DicomMessage.js";
 import { WriteBufferStream } from "./BufferStream.js";
+import {
+    EXPLICIT_LITTLE_ENDIAN,
+    IMPLICIT_LITTLE_ENDIAN,
+    SEQUENCE_DELIMITER_TAG,
+    SEQUENCE_ITEM_TAG,
+    UNDEFINED_LENGTH
+} from "./constants/dicom";
+import { ValueRepresentation } from "./ValueRepresentation.js";
 
-var IMPLICIT_LITTLE_ENDIAN = "1.2.840.10008.1.2";
-var EXPLICIT_LITTLE_ENDIAN = "1.2.840.10008.1.2.1";
+function paddingLeft(paddingValue, string) {
+    return String(paddingValue + string).slice(-paddingValue.length);
+}
+
+let DicomMessage;
 
 class Tag {
     constructor(value) {
         this.value = value;
     }
 
+    /** Helper method to avoid circular dependencies */
+    static setDicomMessageClass(dicomMessageClass) {
+        DicomMessage = dicomMessageClass;
+    }
+
     toString() {
         return (
             "(" +
-            paddingLeft(
-                "0000",
-                this.group()
-                    .toString(16)
-                    .toUpperCase()
-            ) +
+            paddingLeft("0000", this.group().toString(16).toUpperCase()) +
             "," +
-            paddingLeft(
-                "0000",
-                this.element()
-                    .toString(16)
-                    .toUpperCase()
-            ) +
+            paddingLeft("0000", this.element().toString(16).toUpperCase()) +
             ")"
         );
     }
 
     toCleanString() {
         return (
-            paddingLeft(
-                "0000",
-                this.group()
-                    .toString(16)
-                    .toUpperCase()
-            ) +
-            paddingLeft(
-                "0000",
-                this.element()
-                    .toString(16)
-                    .toUpperCase()
-            )
+            paddingLeft("0000", this.group().toString(16).toUpperCase()) +
+            paddingLeft("0000", this.element().toString(16).toUpperCase())
         );
+    }
+
+    get cleanString() {
+        this._cleanString ||= this.toCleanString();
+        return this._cleanString;
     }
 
     is(t) {
         return this.value == t;
+    }
+
+    /**
+     * @returns true if the tag is an Item or Delimiter instruction
+     */
+    isInstruction() {
+        return this.group() === 0xfffe;
     }
 
     group() {
@@ -62,6 +67,22 @@ class Tag {
 
     isPixelDataTag() {
         return this.is(0x7fe00010);
+    }
+
+    isPrivateCreator() {
+        const group = this.group();
+        const element = this.element();
+        return group % 2 === 1 && element < 0x100 && element > 0x00;
+    }
+
+    isMetaInformation() {
+        return this.group() < 0x0008;
+    }
+
+    isPrivateValue() {
+        const group = this.group();
+        const element = this.element();
+        return group % 2 === 1 && element > 0x100;
     }
 
     static fromString(str) {
@@ -86,19 +107,43 @@ class Tag {
         return Tag.fromNumbers(group, element);
     }
 
-    write(stream, vrType, values, syntax) {
-        var vr = ValueRepresentation.createByTypeString(vrType),
-            useSyntax = DicomMessage._normalizeSyntax(syntax);
+    /**
+     * Reads the stream looking for the sequence item tags, returning them
+     * as a buffer, and returning null on sequence delimiter tag.
+     */
+    static getNextSequenceItemData(stream) {
+        const nextTag = this.readTag(stream);
+        if (nextTag.is(SEQUENCE_ITEM_TAG)) {
+            const itemLength = stream.readUint32();
+            const buffer = stream.getBuffer(
+                stream.offset,
+                stream.offset + itemLength
+            );
+            stream.increment(itemLength);
+            return buffer;
+        } else if (nextTag.is(SEQUENCE_DELIMITER_TAG)) {
+            // Read SequenceDelimiterItem value for the SequenceDelimiterTag
+            if (stream.readUint32() !== 0) {
+                throw Error("SequenceDelimiterItem tag value was not zero");
+            }
+            return null;
+        }
 
-        var implicit = useSyntax == IMPLICIT_LITTLE_ENDIAN ? true : false,
-            isLittleEndian =
-                useSyntax == IMPLICIT_LITTLE_ENDIAN ||
-                useSyntax == EXPLICIT_LITTLE_ENDIAN
-                    ? true
-                    : false,
-            isEncapsulated = DicomMessage.isEncapsulated(syntax);
+        throw Error("Invalid tag in sequence");
+    }
 
-        var oldEndian = stream.isLittleEndian;
+    write(stream, vrType, values, syntax, writeOptions) {
+        const vr = ValueRepresentation.createByTypeString(vrType);
+        const useSyntax = DicomMessage._normalizeSyntax(syntax);
+
+        const implicit = useSyntax === IMPLICIT_LITTLE_ENDIAN;
+        const isLittleEndian =
+            useSyntax === IMPLICIT_LITTLE_ENDIAN ||
+            useSyntax === EXPLICIT_LITTLE_ENDIAN;
+        const isEncapsulated =
+            this.isPixelDataTag() && DicomMessage.isEncapsulated(syntax);
+
+        const oldEndian = stream.isLittleEndian;
         stream.setEndian(isLittleEndian);
 
         stream.writeUint16(this.group());
@@ -108,19 +153,27 @@ class Tag {
             valueLength;
         tagStream.setEndian(isLittleEndian);
 
-        if (vrType == "OW" || vrType == "OB") {
+        if (vrType == "OW" || vrType == "OB" || vrType == "UN") {
             valueLength = vr.writeBytes(
                 tagStream,
                 values,
                 useSyntax,
-                isEncapsulated
+                isEncapsulated,
+                writeOptions
+            );
+        } else if (vrType == "SQ") {
+            valueLength = vr.writeBytes(
+                tagStream,
+                values,
+                useSyntax,
+                writeOptions
             );
         } else {
-            valueLength = vr.writeBytes(tagStream, values, useSyntax);
+            valueLength = vr.writeBytes(tagStream, values, writeOptions);
         }
 
         if (vrType == "SQ") {
-            valueLength = 0xffffffff;
+            valueLength = UNDEFINED_LENGTH;
         }
         var written = tagStream.size + 4;
 
@@ -128,13 +181,21 @@ class Tag {
             stream.writeUint32(valueLength);
             written += 4;
         } else {
-            if (vr.isExplicit()) {
-                stream.writeString(vr.type);
-                stream.writeHex("0000");
+            // Big 16 length objects are encodings for values larger than
+            // 16 bit lengths which would normally use a 16 bit length field.
+            // This uses a VR=UN instead of the original VR, and a 32 bit length
+            const isBig16Length =
+                !vr.isLength32() &&
+                valueLength >= 0x10000 &&
+                valueLength !== UNDEFINED_LENGTH;
+            if (vr.isLength32() || isBig16Length) {
+                // Write as vr UN for big values
+                stream.writeAsciiString(isBig16Length ? "UN" : vr.type);
+                stream.writeUint16(0);
                 stream.writeUint32(valueLength);
                 written += 8;
             } else {
-                stream.writeString(vr.type);
+                stream.writeAsciiString(vr.type);
                 stream.writeUint16(valueLength);
                 written += 4;
             }
@@ -147,5 +208,7 @@ class Tag {
         return written;
     }
 }
+
+ValueRepresentation.setTagClass(Tag);
 
 export { Tag };

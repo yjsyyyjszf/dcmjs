@@ -5,13 +5,12 @@ class Point {
     constructor() {}
 
     static getMeasurementData(measurementContent) {
-        const measurement = measurementContent.map(
-            item => item.ContentSequence.GraphicData
-        );
+        const measurement = measurementContent.map(item => item.GraphicData);
         return measurement.filter(
-            (s => a => (j => !s.has(j) && s.add(j))(JSON.stringify(a)))(
-                new Set()
-            )
+            (
+                s => a =>
+                    (j => !s.has(j) && s.add(j))(JSON.stringify(a))
+            )(new Set())
         );
     }
 

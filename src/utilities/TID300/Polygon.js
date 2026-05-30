@@ -1,88 +1,34 @@
-import { DicomMetaDictionary } from "../../DicomMetaDictionary.js";
 import TID300Measurement from "./TID300Measurement.js";
-
-/**
- * Expand an array of points stored as objects into
- * a flattened array of points
- *
- * @param points [{x: 0, y: 1}, {x: 1, y: 2}] or [{x: 0, y: 1, z: 0}, {x: 1, y: 2, z: 0}]
- * @return {Array} [point1x, point1y, point2x, point2y] or [point1x, point1y, point1z, point2x, point2y, point2z]
- */
-function expandPoints(points) {
-    const allPoints = [];
-
-    points.forEach(point => {
-        allPoints.push(point[0]);
-        allPoints.push(point[1]);
-        if (point[2] !== undefined) {
-            allPoints.push(point[2]);
-        }
-    });
-
-    return allPoints;
-}
+import unit2CodingValue from "./unit2CodingValue.js";
+import TID320ContentItem from "./TID320ContentItem.js";
 
 export default class Polygon extends TID300Measurement {
-    constructor({
-        points,
-        lengths,
-        ReferencedSOPSequence,
-        use3DSpatialCoordinates = false
-    }) {
-        super();
-
-        this.points = points;
-        this.lengths = lengths;
-        this.ReferencedSOPSequence = ReferencedSOPSequence;
-        this.use3DSpatialCoordinates = use3DSpatialCoordinates;
-    }
-
     contentItem() {
         const {
             points,
-            lengths,
+            perimeter,
+            unit = "mm",
+            area,
+            areaUnit,
             ReferencedSOPSequence,
-            use3DSpatialCoordinates = false
-        } = this;
+            use3DSpatialCoordinates = false,
+            ReferencedFrameOfReferenceUID
+        } = this.props;
 
-        const perimeter = {};
-        const GraphicData = expandPoints(points);
+        const GraphicData = this.flattenPoints({
+            points,
+            use3DSpatialCoordinates
+        });
 
-        return [
-            {
-                RelationshipType: "HAS OBS CONTEXT",
-                ValueType: "TEXT",
-                ConceptNameCodeSequence: {
-                    CodeValue: "112039",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Tracking Identifier"
-                },
-                TextValue: "web annotation"
-            },
-            {
-                RelationshipType: "HAS OBS CONTEXT",
-                ValueType: "UIDREF",
-                ConceptNameCodeSequence: {
-                    CodeValue: "112040",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Tracking Unique Identifier"
-                },
-                UID: DicomMetaDictionary.uid()
-            },
-            {
-                RelationshipType: "CONTAINS",
-                ValueType: "CODE",
-                ConceptNameCodeSequence: {
-                    CodeValue: "121071",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Finding"
-                },
-                ConceptCodeSequence: {
-                    CodeValue: "SAMPLEFINDING",
-                    CodingSchemeDesignator: "99dcmjs",
-                    CodeMeaning: "Sample Finding"
-                }
-            },
+        const graphicContentSequence = new TID320ContentItem({
+            graphicType: "POLYGON",
+            graphicData: GraphicData,
+            use3DSpatialCoordinates,
+            referencedSOPSequence: ReferencedSOPSequence,
+            referencedFrameOfReferenceUID: ReferencedFrameOfReferenceUID
+        }).contentItem();
+
+        return this.getMeasurement([
             {
                 RelationshipType: "CONTAINS",
                 ValueType: "NUM",
@@ -92,27 +38,10 @@ export default class Polygon extends TID300Measurement {
                     CodeMeaning: "Perimeter"
                 },
                 MeasuredValueSequence: {
-                    MeasurementUnitsCodeSequence: {
-                        CodeValue: "mm",
-                        CodingSchemeDesignator: "UCUM",
-                        CodingSchemeVersion: "1.4",
-                        CodeMeaning: "millimeter"
-                    },
+                    MeasurementUnitsCodeSequence: unit2CodingValue(unit),
                     NumericValue: perimeter
                 },
-                ContentSequence: {
-                    RelationshipType: "INFERRED FROM",
-                    ValueType: use3DSpatialCoordinates ? "SCOORD3D" : "SCOORD",
-                    GraphicType: "POLYGON",
-                    GraphicData,
-                    ContentSequence: use3DSpatialCoordinates
-                        ? undefined
-                        : {
-                              RelationshipType: "SELECTED FROM",
-                              ValueType: "IMAGE",
-                              ReferencedSOPSequence
-                          }
-                }
+                ContentSequence: graphicContentSequence
             },
             {
                 RelationshipType: "CONTAINS",
@@ -123,28 +52,11 @@ export default class Polygon extends TID300Measurement {
                     CodeMeaning: "Area"
                 },
                 MeasuredValueSequence: {
-                    MeasurementUnitsCodeSequence: {
-                        CodeValue: "mm2",
-                        CodingSchemeDesignator: "UCUM",
-                        CodingSchemeVersion: "1.4",
-                        CodeMeaning: "SquareMilliMeter"
-                    },
-                    NumericValue: perimeter
+                    MeasurementUnitsCodeSequence: unit2CodingValue(areaUnit),
+                    NumericValue: area
                 },
-                ContentSequence: {
-                    RelationshipType: "INFERRED FROM",
-                    ValueType: use3DSpatialCoordinates ? "SCOORD3D" : "SCOORD",
-                    GraphicType: "POLYGON",
-                    GraphicData,
-                    ContentSequence: use3DSpatialCoordinates
-                        ? undefined
-                        : {
-                              RelationshipType: "SELECTED FROM",
-                              ValueType: "IMAGE",
-                              ReferencedSOPSequence
-                          }
-                }
+                ContentSequence: graphicContentSequence
             }
-        ];
+        ]);
     }
 }

@@ -1,4 +1,4 @@
-import log from "loglevelnext";
+import log from "./log.js";
 
 class DICOMWEB {
     /*
@@ -108,7 +108,7 @@ class DICOMWEB {
 
         new DICOMWEB(testOptions).patients().then(responses => {
             responses.forEach(patient => {
-                log.log(patient);
+                log.info(patient);
             });
         });
     }

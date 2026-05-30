@@ -7,7 +7,6 @@ import {
     GraphicTypes3D,
     ImageContentItem,
     NumContentItem,
-    PixelOriginInterpretations,
     RelationshipTypes,
     ScoordContentItem,
     Scoord3DContentItem,
@@ -110,7 +109,7 @@ class ImageRegion extends ScoordContentItem {
         if (
             !(
                 options.sourceImage ||
-                options.sourceImage.constructor === SourceImageForRegion
+                options.sourceImage instanceof SourceImageForRegion
             )
         ) {
             throw new Error(
@@ -170,7 +169,7 @@ class VolumeSurface extends Scoord3DContentItem {
         this.ContentSequence = new ContentSequence();
         if (options.sourceImages) {
             options.sourceImages.forEach(image => {
-                if (!(image || image.constructor === SourceImageForRegion)) {
+                if (!(image instanceof SourceImageForRegion)) {
                     throw new Error(
                         "Items of option 'sourceImages' of VolumeSurface " +
                             "must have type SourceImageForRegion."
@@ -180,14 +179,11 @@ class VolumeSurface extends Scoord3DContentItem {
             });
         } else if (options.sourceSeries) {
             if (
-                !(
-                    options.sourceSeries ||
-                    options.sourceSeries.constructor === SourceSeriesForRegion
-                )
+                !(options.sourceSeries instanceof SourceSeriesForSegmentation)
             ) {
                 throw new Error(
                     "Option 'sourceSeries' of VolumeSurface " +
-                        "must have type SourceSeriesForRegion."
+                        "must have type SourceSeriesForSegmentation."
                 );
             }
             this.ContentSequence.push(options.sourceSeries);
@@ -208,7 +204,7 @@ class ReferencedRealWorldValueMap extends CompositeContentItem {
                 meaning: "Real World Value Map used for measurement",
                 schemeDesignator: "DCM"
             }),
-            referencedSOPClassUID: option.referencedSOPClassUID,
+            referencedSOPClassUID: options.referencedSOPClassUID,
             referencedSOPInstanceUID: options.referencedSOPInstanceUID,
             relationshipType: RelationshipTypes.CONTAINS
         });
@@ -294,12 +290,12 @@ class ReferencedSegmentationFrame extends ContentSequence {
             referencedSegmentNumber: options.segmentNumber
         });
         this.push(segmentationItem);
-        if (options.sourceImage.constructor !== SourceImageForSegmentation) {
+        if (!(options.sourceImage instanceof SourceImageForSegmentation)) {
             throw new Error(
                 "Option 'sourceImage' must have type SourceImageForSegmentation."
             );
         }
-        this.push(sourceImage);
+        this.push(options.sourceImage);
     }
 }
 
@@ -340,10 +336,7 @@ class ReferencedSegmentation extends ContentSequence {
         this.push(segmentationItem);
         if (options.sourceImages !== undefined) {
             options.sourceImages.forEach(image => {
-                if (
-                    !image ||
-                    image.constructor !== SourceImageForSegmentation
-                ) {
+                if (!image || !(image instanceof SourceImageForSegmentation)) {
                     throw new Error(
                         "Items of option 'sourceImages' must have type " +
                             "SourceImageForSegmentation."
@@ -353,13 +346,13 @@ class ReferencedSegmentation extends ContentSequence {
             });
         } else if (options.sourceSeries !== undefined) {
             if (
-                options.sourceSeries.constructor !== SourceSeriesForSegmentation
+                !(options.sourceSeries instanceof SourceSeriesForSegmentation)
             ) {
                 throw new Error(
                     "Option 'sourceSeries' must have type SourceSeriesForSegmentation."
                 );
             }
-            this.push(sourceSeries);
+            this.push(options.sourceSeries);
         } else {
             throw new Error(
                 "One of the following two options must be provided: " +

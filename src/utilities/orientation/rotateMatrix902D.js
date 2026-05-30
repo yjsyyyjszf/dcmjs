@@ -6,10 +6,8 @@ import ndarray from "ndarray";
  * @param  {Ndarray} matrix The matrix to rotate.
  * @return {Ndarry}        The rotated matrix.
  */
-export default function(matrix) {
+export default function (matrix) {
     const [rows, cols] = matrix.shape;
-
-    //debugPrintMatrix(matrix);
 
     let result = ndarray(new Uint8Array(rows * cols), [cols, rows]);
 
@@ -21,19 +19,5 @@ export default function(matrix) {
         }
     }
 
-    //debugPrintMatrix(result);
-
     return result;
-}
-
-function debugPrintMatrix(m) {
-    console.log(`shape: (${m.shape[0]}, ${m.shape[1]})`);
-
-    for (let i = 0; i < m.shape[0]; i++) {
-        let row = "";
-        for (let j = 0; j < m.shape[1]; j++) {
-            row += `${m.get(i, j)} `;
-        }
-        console.log(row);
-    }
 }

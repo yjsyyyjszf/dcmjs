@@ -1,157 +1,78 @@
-import { DicomMetaDictionary } from "../../DicomMetaDictionary.js";
-import TID300Measurement from "./TID300Measurement.js";
-
-/**
- * Expand an array of points stored as objects into
- * a flattened array of points
- *
- * @param points [{x: 0, y: 1}, {x: 1, y: 2}] or [{x: 0, y: 1, z: 0}, {x: 1, y: 2, z: 0}]
- * @return {Array} [point1x, point1y, point2x, point2y] or [point1x, point1y, point1z, point2x, point2y, point2z]
- */
-function expandPoints(points) {
-    const allPoints = [];
-
-    points.forEach(point => {
-        allPoints.push(point[0]);
-        allPoints.push(point[1]);
-        if (point[2] !== undefined) {
-            allPoints.push(point[2]);
-        }
-    });
-
-    return allPoints;
-}
+import TID300Measurement from "./TID300Measurement";
+import TID320ContentItem from "./TID320ContentItem.js";
+import MeasurementBuilder from "../MeasurementBuilder.js";
 
 export default class Polyline extends TID300Measurement {
-    constructor({
-        points,
-        lengths,
-        ReferencedSOPSequence,
-        use3DSpatialCoordinates = false
-    }) {
-        super();
-
-        this.points = points;
-        this.lengths = lengths;
-        this.ReferencedSOPSequence = ReferencedSOPSequence;
-        this.use3DSpatialCoordinates = use3DSpatialCoordinates;
-    }
-
     contentItem() {
         const {
             points,
-            lengths,
+            area,
+            areaUnit = "mm2",
             ReferencedSOPSequence,
-            use3DSpatialCoordinates = false
-        } = this;
+            use3DSpatialCoordinates = false,
+            perimeter,
+            unit = "mm",
+            modalityUnit,
+            min,
+            max,
+            mean,
+            stdDev,
+            ReferencedFrameOfReferenceUID
+        } = this.props;
 
-        // Combine all lengths to save the perimeter
-        // @ToDO The permiter has to be implemented
-        // const reducer = (accumulator, currentValue) => accumulator + currentValue;
-        // const perimeter = lengths.reduce(reducer);
-        const perimeter = {};
-        const GraphicData = expandPoints(points);
+        const GraphicData = this.flattenPoints({
+            points,
+            use3DSpatialCoordinates
+        });
 
-        // TODO: Add Mean and STDev value of (modality?) pixels
-
-        return [
+        const measurementConfigs = [
             {
-                RelationshipType: "HAS OBS CONTEXT",
-                ValueType: "TEXT",
-                ConceptNameCodeSequence: {
-                    CodeValue: "112039",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Tracking Identifier"
-                },
-                TextValue: "web annotation"
+                value: perimeter,
+                unit: unit,
+                builder: MeasurementBuilder.createPerimeterMeasurement
             },
             {
-                RelationshipType: "HAS OBS CONTEXT",
-                ValueType: "UIDREF",
-                ConceptNameCodeSequence: {
-                    CodeValue: "112040",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Tracking Unique Identifier"
-                },
-                UID: DicomMetaDictionary.uid()
+                value: area,
+                unit: areaUnit,
+                builder: MeasurementBuilder.createAreaMeasurement
             },
             {
-                RelationshipType: "CONTAINS",
-                ValueType: "CODE",
-                ConceptNameCodeSequence: {
-                    CodeValue: "121071",
-                    CodingSchemeDesignator: "DCM",
-                    CodeMeaning: "Finding"
-                },
-                ConceptCodeSequence: {
-                    CodeValue: "SAMPLEFINDING",
-                    CodingSchemeDesignator: "99dcmjs",
-                    CodeMeaning: "Sample Finding"
-                }
+                value: max,
+                unit: modalityUnit,
+                builder: MeasurementBuilder.createMaxMeasurement
             },
             {
-                RelationshipType: "CONTAINS",
-                ValueType: "NUM",
-                ConceptNameCodeSequence: {
-                    CodeValue: "G-A197",
-                    CodingSchemeDesignator: "SRT",
-                    CodeMeaning: "Perimeter" // TODO: Look this up from a Code Meaning dictionary
-                },
-                MeasuredValueSequence: {
-                    MeasurementUnitsCodeSequence: {
-                        CodeValue: "mm",
-                        CodingSchemeDesignator: "UCUM",
-                        CodingSchemeVersion: "1.4",
-                        CodeMeaning: "millimeter"
-                    },
-                    NumericValue: perimeter
-                },
-                ContentSequence: {
-                    RelationshipType: "INFERRED FROM",
-                    ValueType: use3DSpatialCoordinates ? "SCOORD3D" : "SCOORD",
-                    GraphicType: "POLYLINE",
-                    GraphicData,
-                    ContentSequence: use3DSpatialCoordinates
-                        ? undefined
-                        : {
-                              RelationshipType: "SELECTED FROM",
-                              ValueType: "IMAGE",
-                              ReferencedSOPSequence
-                          }
-                }
+                value: min,
+                unit: modalityUnit,
+                builder: MeasurementBuilder.createMinMeasurement
             },
             {
-                // TODO: This feels weird to repeat the GraphicData
-                RelationshipType: "CONTAINS",
-                ValueType: "NUM",
-                ConceptNameCodeSequence: {
-                    CodeValue: "G-A166",
-                    CodingSchemeDesignator: "SRT",
-                    CodeMeaning: "Area" // TODO: Look this up from a Code Meaning dictionary
-                },
-                MeasuredValueSequence: {
-                    MeasurementUnitsCodeSequence: {
-                        CodeValue: "mm2",
-                        CodingSchemeDesignator: "UCUM",
-                        CodingSchemeVersion: "1.4",
-                        CodeMeaning: "SquareMilliMeter"
-                    },
-                    NumericValue: perimeter
-                },
-                ContentSequence: {
-                    RelationshipType: "INFERRED FROM",
-                    ValueType: use3DSpatialCoordinates ? "SCOORD3D" : "SCOORD",
-                    GraphicType: "POLYLINE",
-                    GraphicData,
-                    ContentSequence: use3DSpatialCoordinates
-                        ? undefined
-                        : {
-                              RelationshipType: "SELECTED FROM",
-                              ValueType: "IMAGE",
-                              ReferencedSOPSequence
-                          }
-                }
+                value: mean,
+                unit: modalityUnit,
+                builder: MeasurementBuilder.createMeanMeasurement
+            },
+            {
+                value: stdDev,
+                unit: modalityUnit,
+                builder: MeasurementBuilder.createStdDevMeasurement
             }
         ];
+        const scoordContentItem = new TID320ContentItem({
+            graphicType: "POLYLINE",
+            graphicData: GraphicData,
+            use3DSpatialCoordinates,
+            referencedSOPSequence: ReferencedSOPSequence,
+            referencedFrameOfReferenceUID: ReferencedFrameOfReferenceUID
+        }).contentItem();
+
+        const measurements = measurementConfigs
+            .filter(config => config.value !== undefined)
+            .map((config, index) =>
+                config.builder(config.value, config.unit, {
+                    scoordContentItem: index === 0 ? scoordContentItem : null
+                })
+            );
+
+        return this.getMeasurement(measurements);
     }
 }

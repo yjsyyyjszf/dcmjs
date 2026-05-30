@@ -1,7 +1,10 @@
 import { WriteBufferStream } from "./BufferStream";
-import { DicomMessage } from "./DicomMessage";
+import { ValueRepresentation } from "./ValueRepresentation";
+import { TagHex } from "./constants/dicom";
 
 const EXPLICIT_LITTLE_ENDIAN = "1.2.840.10008.1.2.1";
+
+let DicomMessage;
 
 class DicomDict {
     constructor(meta) {
@@ -11,38 +14,46 @@ class DicomDict {
 
     upsertTag(tag, vr, values) {
         if (this.dict[tag]) {
+            // Should already have tag accessors.
             this.dict[tag].Value = values;
         } else {
-            this.dict[tag] = { vr: vr, Value: values };
+            this.dict[tag] = ValueRepresentation.addTagAccessors({ vr: vr });
+            this.dict[tag].Value = values;
         }
     }
 
-    write() {
+    write(writeOptions = { allowInvalidVRLength: false }) {
         var metaSyntax = EXPLICIT_LITTLE_ENDIAN;
         var fileStream = new WriteBufferStream(4096, true);
-        fileStream.writeHex("00".repeat(128));
-        fileStream.writeString("DICM");
+        fileStream.writeUint8Repeat(0, 128);
+        fileStream.writeAsciiString("DICM");
 
         var metaStream = new WriteBufferStream(1024);
-        if (!this.meta["00020010"]) {
-            this.meta["00020010"] = {
+        if (!this.meta[TagHex.TransferSyntaxUID]) {
+            this.meta[TagHex.TransferSyntaxUID] = {
                 vr: "UI",
                 Value: [EXPLICIT_LITTLE_ENDIAN]
             };
         }
-        DicomMessage.write(this.meta, metaStream, metaSyntax);
+        DicomMessage.write(this.meta, metaStream, metaSyntax, writeOptions);
         DicomMessage.writeTagObject(
             fileStream,
-            "00020000",
+            TagHex.FileMetaInformationGroupLength,
             "UL",
             metaStream.size,
-            metaSyntax
+            metaSyntax,
+            writeOptions
         );
         fileStream.concat(metaStream);
 
-        var useSyntax = this.meta["00020010"].Value[0];
-        DicomMessage.write(this.dict, fileStream, useSyntax);
+        var useSyntax = this.meta[TagHex.TransferSyntaxUID].Value[0];
+        DicomMessage.write(this.dict, fileStream, useSyntax, writeOptions);
         return fileStream.getBuffer();
+    }
+
+    /** Helper method to avoid circular dependencies */
+    static setDicomMessageClass(dicomMessageClass) {
+        DicomMessage = dicomMessageClass;
     }
 }
 

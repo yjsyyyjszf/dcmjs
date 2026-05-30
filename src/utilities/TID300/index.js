@@ -1,7 +1,15 @@
 import TID300Measurement from "./TID300Measurement.js";
+import Point from "./Point.js";
 import Length from "./Length.js";
+import ArrowAnnotate from "./ArrowAnnotate.js";
+import CobbAngle from "./CobbAngle";
 import Bidirectional from "./Bidirectional.js";
 import Polyline from "./Polyline.js";
+import Polygon from "./Polygon.js";
+import Ellipse from "./Ellipse";
+import Circle from "./Circle";
+import Calibration from "./Calibration";
+import unit2CodingValue from "./unit2CodingValue";
 
 // To be implemented:
 // - Cornerstone Probe
@@ -17,19 +25,6 @@ import Polyline from "./Polyline.js";
 //
 // - Cornerstone Ellipse:
 //
-// Hierarchy
-// TID 1500 MeasurementReport
-// -TID 1410 Planar ROI Measurements
-// --TID 1501 Measurement Group
-// ---Measurement Group (DCM 125007)
-// ----TID 300 Measurement
-// ------SCOORD. Graphic Type: ELLIPSE
-//        (ftp://dicom.nema.org/MEDICAL/dicom/current/output/chtml/part03/sect_C.10.5.html)
-//
-// If Graphic Type (0070,0023) is ELLIPSE, then exactly four points shall be present; the first two points are to be interpreted as the endpoints of the major axis and the second two points as the endpoints of the minor axis of an ellipse, some form of implementation dependent representation of which is to be drawn.
-//
-// TID 1401 Area Measurement: http://dicom.nema.org/medical/dicom/current/output/html/part16.html#sect_TID_1401
-// Should be a sibling of the SCOORD
 // Should specify the Mean Modality Pixel Value measured in whatever units the image is in
 // Should specify the Standard Deviation Modality Pixel Value measured in whatever units the image is in
 //
@@ -74,9 +69,17 @@ import Polyline from "./Polyline.js";
 //
 const TID300 = {
     TID300Measurement,
+    Point,
     Length,
+    ArrowAnnotate,
+    CobbAngle,
     Bidirectional,
-    Polyline
+    Polyline,
+    Polygon,
+    Ellipse,
+    Circle,
+    Calibration,
+    unit2CodingValue
 };
 
 export { TID300Measurement, Length };

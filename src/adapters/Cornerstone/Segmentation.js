@@ -52,6 +52,10 @@ function generateSegmentation(
  * @param  {string[]} imageIds    An array of the imageIds.
  * @param  {ArrayBuffer} arrayBuffer The SEG arrayBuffer.
  * @param {*} metadataProvider
+ * @param  {bool} skipOverlapping - skip checks for overlapping segs, default value false.
+ * @param  {number} tolerance - default value 1.e-3.
+ * @param  {number} cornerstoneToolsVersion - default value 4.
+ *
  * @returns {Object}  The toolState and an object from which the
  *                    segment metadata can be derived.
  */
@@ -59,13 +63,17 @@ function generateToolState(
     imageIds,
     arrayBuffer,
     metadataProvider,
+    skipOverlapping = false,
+    tolerance = 1e-3,
     cornerstoneToolsVersion = 4
 ) {
     if (cornerstoneToolsVersion === 4) {
         return Segmentation_4X.generateToolState(
             imageIds,
             arrayBuffer,
-            metadataProvider
+            metadataProvider,
+            skipOverlapping,
+            tolerance
         );
     }
 
